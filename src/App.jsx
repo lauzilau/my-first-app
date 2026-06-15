@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { supabase } from "./supabase";
 import "./App.css";
 
 const questions = [
@@ -9,11 +10,6 @@ const questions = [
   { a: "Im Sommer frieren", b: "Im Winter schwitzen" },
 ];
 
-function getRandomVote() {
-  const a = Math.floor(Math.random() * 40) + 30;
-  return { a, b: 100 - a };
-}
-
 export default function App() {
   const [index, setIndex] = useState(0);
   const [chosen, setChosen] = useState(null);
@@ -22,21 +18,39 @@ export default function App() {
   const question = questions[index];
   const isLast = index === questions.length - 1;
 
-  function choose(side) {
+  useEffect(() => {
+    setChosen(null);
+    setVotes(null);
+  }, [index]);
+
+  async function choose(side) {
     setChosen(side);
-    setVotes(getRandomVote());
+
+    // Save vote to Supabase
+    await supabase.from("votes").insert({ question_index: index, side });
+
+    // Fetch all votes for this question
+    const { data } = await supabase
+      .from("votes")
+      .select("side")
+      .eq("question_index", index);
+
+    const total = data.length;
+    const aCount = data.filter((v) => v.side === "a").length;
+    const bCount = total - aCount;
+
+    setVotes({
+      a: total ? Math.round((aCount / total) * 100) : 50,
+      b: total ? Math.round((bCount / total) * 100) : 50,
+    });
   }
 
   function next() {
     setIndex(index + 1);
-    setChosen(null);
-    setVotes(null);
   }
 
   function restart() {
     setIndex(0);
-    setChosen(null);
-    setVotes(null);
   }
 
   if (index >= questions.length) {
