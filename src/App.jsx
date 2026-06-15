@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabase";
+import Auth from "./Auth";
+import NotInvited from "./NotInvited";
 import "./App.css";
 
 const questions = [
@@ -11,25 +13,43 @@ const questions = [
 ];
 
 export default function App() {
+  const [session, setSession] = useState(undefined);
   const [index, setIndex] = useState(0);
   const [chosen, setChosen] = useState(null);
   const [votes, setVotes] = useState(null);
-
-  const question = questions[index];
-  const isLast = index === questions.length - 1;
+  const [alreadyVoted, setAlreadyVoted] = useState(false);
 
   useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+    supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (session) checkIfVoted();
     setChosen(null);
     setVotes(null);
-  }, [index]);
+  }, [index, session]);
 
-  async function choose(side) {
-    setChosen(side);
+  async function checkIfVoted() {
+    const { data } = await supabase
+      .from("votes")
+      .select("side")
+      .eq("question_index", index)
+      .eq("user_id", session.user.id);
 
-    // Save vote to Supabase
-    await supabase.from("votes").insert({ question_index: index, side });
+    if (data && data.length > 0) {
+      setAlreadyVoted(true);
+      fetchVotes();
+    } else {
+      setAlreadyVoted(false);
+    }
+  }
 
-    // Fetch all votes for this question
+  async function fetchVotes() {
     const { data } = await supabase
       .from("votes")
       .select("side")
@@ -45,6 +65,33 @@ export default function App() {
     });
   }
 
+  async function choose(side) {
+    if (alreadyVoted) return;
+    setChosen(side);
+
+    const { error: insertError } = await supabase.from("votes").insert({
+      question_index: index,
+      side,
+      user_id: session.user.id,
+    });
+    console.log("insert error:", insertError);
+
+    const { data, error: selectError } = await supabase
+      .from("votes")
+      .select("side")
+      .eq("question_index", index);
+    console.log("votes data:", data, "select error:", selectError);
+
+    const total = data?.length || 0;
+    const aCount = data?.filter((v) => v.side === "a").length || 0;
+    const bCount = total - aCount;
+
+    setVotes({
+      a: total ? Math.round((aCount / total) * 100) : 50,
+      b: total ? Math.round((bCount / total) * 100) : 50,
+    });
+  }
+
   function next() {
     setIndex(index + 1);
   }
@@ -52,6 +99,13 @@ export default function App() {
   function restart() {
     setIndex(0);
   }
+
+  if (session === undefined) return null;
+  if (session === null) return <Auth />;
+  if (!session.user.email_confirmed_at) return <NotInvited />;
+
+  const question = questions[index];
+  const isLast = index === questions.length - 1;
 
   if (index >= questions.length) {
     return (
@@ -69,8 +123,8 @@ export default function App() {
 
       <div className="cards">
         <button
-          className={`card left ${chosen === "a" ? "chosen" : ""} ${chosen ? "locked" : ""}`}
-          onClick={() => !chosen && choose("a")}
+          className={`card left ${chosen === "a" || alreadyVoted ? "chosen" : ""} ${chosen || alreadyVoted ? "locked" : ""}`}
+          onClick={() => !chosen && !alreadyVoted && choose("a")}
         >
           {question.a}
           {votes && <span className="vote">{votes.a}%</span>}
@@ -79,15 +133,15 @@ export default function App() {
         <span className="oder">ODER</span>
 
         <button
-          className={`card right ${chosen === "b" ? "chosen" : ""} ${chosen ? "locked" : ""}`}
-          onClick={() => !chosen && choose("b")}
+          className={`card right ${chosen === "b" || alreadyVoted ? "chosen" : ""} ${chosen || alreadyVoted ? "locked" : ""}`}
+          onClick={() => !chosen && !alreadyVoted && choose("b")}
         >
           {question.b}
           {votes && <span className="vote">{votes.b}%</span>}
         </button>
       </div>
 
-      {chosen && (
+      {(chosen || alreadyVoted) && (
         <button className="next-btn" onClick={isLast ? restart : next}>
           {isLast ? "Nochmal spielen" : "Nächste Frage →"}
         </button>
